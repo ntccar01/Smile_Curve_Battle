@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微笑曲線大作戰：穿越低谷的能量戰車</title>
+    <!-- 引入 Tailwind CSS (這是一個讓我們可以快速排版的工具) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 基礎的網頁背景設定 */
+        body {
+            background-color: #1a202c; /* 深色背景，讓遊戲更有科技感 */
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            overflow: hidden; /* 防止畫面出現捲動條 */
+        }
+        /* 畫布的樣式 */
+        #gameCanvas {
+            background-color: #2d3748; /* 畫布背景色 */
+            border-radius: 0.5rem; /* 圓角效果 */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center h-screen p-4">
+
+    <!-- 遊戲標題區塊 -->
+    <div class="text-center mb-4">
+        <h1 class="text-3xl font-bold text-yellow-400 mb-2">微笑曲線大作戰 📉🚀</h1>
+        <p class="text-gray-300">設定你的每月能量預算，準備穿越股價低谷！</p>
+    </div>
+
+    <!-- 遊戲主要畫布 (Canvas) -->
+    <!-- 這就是我們稍後要畫出戰車、折線圖的地方 -->
+    <div class="relative w-full max-w-4xl">
+        <canvas id="gameCanvas" width="800" height="400" class="w-full"></canvas>
+        
+        <!-- 恐慌停扣按鈕 (預設隱藏，使用絕對定位放在畫布正中央) -->
+        <button id="panicBtn" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-600 hover:bg-red-700 text-white font-bold py-4 px-8 rounded-full shadow-2xl animate-pulse text-xl border-4 border-red-900 z-10 transition duration-300">
+            ⚠️ 市場崩盤！<br>點擊「恐慌停扣」
+        </button>
+
+        <!-- [新增] 恢復扣款按鈕 (預設隱藏，當股價回穩時出現) -->
+        <button id="resumeBtn" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-8 rounded-full shadow-2xl animate-bounce text-xl border-4 border-green-900 z-10 transition duration-300">
+            📈 股價回穩了！<br>點擊「恢復扣款」
+        </button>
+    </div>
+
+    <!-- 控制面板區塊 -->
+    <div class="mt-6 flex gap-4 items-center bg-gray-800 p-4 rounded-lg shadow-lg">
+        <label for="budget" class="text-lg">每月投入預算：</label>
+        <select id="budget" class="bg-gray-700 text-white p-2 rounded outline-none border border-gray-600 focus:border-yellow-400">
+            <option value="3000">3,000 元</option>
+            <option value="5000">5,000 元</option>
+            <option value="10000">10,000 元</option>
+        </select>
+        <button id="startBtn" class="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded transition duration-200">
+            開始挑戰
+        </button>
+    </div>
+
+    <!-- JavaScript 程式碼區塊 (我們寫邏輯的地方) -->
+    <script>
+        // --- 變數宣告區 ---
+        // 抓取 HTML 上的畫布 (Canvas) 元素
+        const canvas = document.getElementById('gameCanvas');
+        // 取得 2D 渲染環境 (想像成拿到了可以在畫布上畫畫的畫筆)
+        const ctx = canvas.getContext('2d');
+
+        // 抓取畫面上的「下拉選單」與「按鈕」
+        const budgetSelect = document.getElementById('budget');
+        const startBtn = document.getElementById('startBtn');
+        const panicBtn = document.getElementById('panicBtn'); 
+        const resumeBtn = document.getElementById('resumeBtn'); // [新增] 抓取恢復按鈕
+
+        // 遊戲的狀態變數
+        let currentBudget = 0; // 用來記錄玩家選了多少錢
+        let gameStarted = false; // 記錄遊戲是否已經開始
+        let isStopped = false; // 記錄玩家是否按下了停扣
+
+        // 投資相關變數 (定期定額記帳本)
+        let totalInvested = 0;   // 總共投入了多少錢 (成本)
+        let totalCrystals = 0;   // 總共買到了多少顆水晶 (股數)
+        let currentPrice = 100;  // 水晶目前的單價
+        
+        // 單筆全歐印 (All-in) 對照組的記帳本
+        let allInInvested = 0;   
+        let allInCrystals = 0;   
+
+        // 紀錄目前到了第幾個月
+        let currentMonthIndex = 0; 
+        const totalMonths = 24; // 總期程定為 24 個月 (2年)
+
+        // 視覺化籌碼：用來裝掉落水晶的陣列
+        let crystalParticles = [];
+
+        // 動畫與戰車相關變數
+        let animationId; // 用來控制動畫暫停或停止
+        let tank = { progress: 0, speed: 0.000375 }; // 極致慢速版
+        
+        // 將原本單一的「貝茲曲線」，升級為「24個月的歷史價格陣列」
+        const priceHistory = [
+            100,  95,  80,  60,  40,  30,  // 第0~5個月：第一波大跌
+             45,  65,  85, 110, 120, 100,  // 第6~11個月：反彈與回檔 (高點)
+             85,  70,  55,  40,  35,  50,  // 第12~17個月：二次探底 (低點)
+             70,  90, 110, 125, 140, 150, 160 // 第18~24個月：大多頭創新高
+        ];
+
+        // --- 初始化函數 ---
+        function init() {
+            // 畫一個簡單的網格，確認畫布有正常運作
+            drawGrid();
+            console.log("遊戲基礎畫面已載入！");
+        }
+
+        // --- 繪圖函數 ---
+        // 畫出 24 個月的股價走勢圖
+        function drawSmileCurve() {
+            ctx.beginPath();
+            ctx.strokeStyle = '#38b2ac'; // 科技感的藍綠色線條
+            ctx.lineWidth = 5; // 線條粗細
+            
+            // 將 24 個月的價格轉換成畫布上的 X, Y 座標，畫出折線圖
+            for (let i = 0; i <= totalMonths; i++) {
+                const { x, y } = getPositionByMonth(i);
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            
+            ctx.stroke(); // 把線畫出來
+        }
+
+        // 根據「月份」計算精確位置
+        function getPositionByMonth(monthFloat) {
+            // X 軸：預留左右各 50px 邊距，中間 700px 平分給 24 個月
+            const x = 50 + (monthFloat / totalMonths) * 700;
+            
+            // 抓取整數月份與下一個月份，計算中間的過渡值(讓戰車平滑移動)
+            const index = Math.floor(monthFloat);
+            const remainder = monthFloat - index;
+            
+            let price = priceHistory[index];
+            if (index < totalMonths) {
+                const nextPrice = priceHistory[index + 1];
+                price = price + (nextPrice - price) * remainder;
+            }
+            
+            // Y 軸：價格乘上 2 當作高度，並從底部扣除。價格越高，Y 座標越小 (越上面)
+            const y = canvas.height - (price * 2) + 50; 
+            return { x, y, price };
+        }
+
+        // 畫出戰車
+        function drawTank(x, y) {
+            ctx.fillStyle = '#ef4444'; // 紅色戰車本體
+            // 畫一個長方形當作戰車，並讓它的中心點對齊 (x, y)
+            ctx.fillRect(x - 15, y - 10, 30, 20); 
+            
+            // 畫戰車的砲管
+            ctx.fillStyle = '#fca5a5';
+            ctx.fillRect(x + 5, y - 4, 20, 8);
+        }
+
+        // 畫出代表 All-in 的幽靈戰車
+        function drawGhostTank(x, y) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'; // 半透明白色/灰色
+            // 為了不被紅車完全擋住，我們讓幽靈戰車稍微往左上偏移一點點
+            ctx.fillRect(x - 20, y - 25, 30, 20); 
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.fillRect(x, y - 19, 20, 8);
+            
+            // 加上文字標籤
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.font = 'bold 12px "Segoe UI"';
+            ctx.fillText('All-in', x - 20, y - 30);
+        }
+
+        // 畫出投資數據儀表板
+        function drawDashboard() {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; // 半透明黑色背景框
+            ctx.fillRect(10, 10, 250, 240); 
+
+            ctx.fillStyle = '#ffffff'; // 白色文字
+            ctx.font = 'bold 16px "Segoe UI"';
+            
+            // 根據停扣狀態改變標題文字與顏色
+            if (isStopped) {
+                ctx.fillStyle = '#ef4444'; // 紅色警告
+                ctx.fillText(`⛔ 已停扣 (空手中)`, 20, 35);
+            } else {
+                ctx.fillStyle = '#ffffff'; 
+                ctx.fillText(`🔴 定期定額 (扣款中)`, 20, 35);
+            }
+            
+            // 顯示目前是第幾個月
+            ctx.fillStyle = '#eab308'; // 黃色
+            ctx.fillText(`🗓️ 進度：第 ${currentMonthIndex} / ${totalMonths} 個月`, 20, 60);
+            
+            ctx.fillStyle = '#60a5fa'; // 淺藍色顯示價格
+            ctx.fillText(`💎 目前水晶單價：$${currentPrice.toFixed(0)}`, 20, 85);
+            
+            ctx.fillStyle = '#f87171'; // 淺紅色顯示成本
+            ctx.fillText(`💰 總投入成本：$${totalInvested}`, 20, 110);
+            
+            ctx.fillStyle = '#34d399'; // 淺綠色顯示獲得數量
+            ctx.fillText(`📦 累積水晶數：${totalCrystals.toFixed(1)} 顆`, 20, 135); 
+
+            // --- All-in 數據區 ---
+            // 畫一條分隔線
+            ctx.strokeStyle = '#4b5563';
+            ctx.beginPath();
+            ctx.moveTo(15, 150);
+            ctx.lineTo(245, 150);
+            ctx.stroke();
+
+            ctx.fillStyle = '#9ca3af'; // 灰色
+            ctx.font = 'bold 16px "Segoe UI"';
+            ctx.fillText(`👻 單筆歐印 (對照組)`, 20, 175);
+            
+            ctx.fillStyle = '#f87171'; 
+            ctx.fillText(`💰 總投入成本：$${allInInvested}`, 20, 200);
+            
+            ctx.fillStyle = '#34d399'; 
+            ctx.fillText(`📦 累積水晶數：${allInCrystals.toFixed(1)} 顆`, 20, 225); 
+        }
+
+        // 結算報告區塊 (大對決)
+        function drawGameOver() {
+            // 計算定期定額最終價值與報酬率
+            const finalValue = totalCrystals * currentPrice;
+            // 防呆機制：如果中途一直停扣導致沒花半毛錢，ROI預設為0
+            const roi = totalInvested > 0 ? ((finalValue - totalInvested) / totalInvested) * 100 : 0;
+
+            // 計算單筆歐印最終價值與報酬率
+            const allInFinalValue = allInCrystals * currentPrice;
+            const allInRoi = ((allInFinalValue - allInInvested) / allInInvested) * 100;
+
+            // 畫出半透明的結算背景框 (置中)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillRect(100, 40, 600, 320); // 把框框加大加寬
+
+            // 畫出結算文字 (標題置中)
+            ctx.fillStyle = '#fbbf24'; // 黃色標題
+            ctx.font = 'bold 32px "Segoe UI"';
+            ctx.textAlign = 'center';
+            ctx.fillText('🏁 挑戰完成！投資策略大對決', canvas.width / 2, 80);
+            ctx.textAlign = 'left'; // 恢復靠左對齊
+
+            // --- 左半邊：定期定額 (DCA) ---
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 22px "Segoe UI"';
+            ctx.fillText('🔴 定期定額 (你)', 150, 130);
+            
+            ctx.font = '18px "Segoe UI"';
+            ctx.fillText(`總投入成本： $${totalInvested.toFixed(0)}`, 150, 170);
+            ctx.fillText(`累積水晶數： ${totalCrystals.toFixed(1)} 顆`, 150, 200);
+            
+            ctx.fillStyle = '#34d399'; 
+            ctx.font = 'bold 20px "Segoe UI"';
+            ctx.fillText(`💰 總價值： $${finalValue.toFixed(0)}`, 150, 250);
+            
+            ctx.fillStyle = roi >= 0 ? '#ef4444' : '#10b981';
+            ctx.fillText(`${roi >= 0 ? '📈' : '📉'} 報酬率： ${roi >= 0 ? '+' : ''}${roi.toFixed(2)}%`, 150, 280);
+
+            // --- 右半邊：單筆歐印 (All-in) ---
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = 'bold 22px "Segoe UI"';
+            ctx.fillText('👻 單筆全歐印 (對照組)', 450, 130);
+            
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '18px "Segoe UI"';
+            ctx.fillText(`總投入成本： $${allInInvested.toFixed(0)}`, 450, 170);
+            ctx.fillText(`累積水晶數： ${allInCrystals.toFixed(1)} 顆`, 450, 200);
+            
+            ctx.fillStyle = '#34d399'; 
+            ctx.font = 'bold 20px "Segoe UI"';
+            ctx.fillText(`💰 總價值： $${allInFinalValue.toFixed(0)}`, 450, 250);
+            
+            ctx.fillStyle = allInRoi >= 0 ? '#ef4444' : '#10b981';
+            ctx.fillText(`${allInRoi >= 0 ? '📈' : '📉'} 報酬率： ${allInRoi >= 0 ? '+' : ''}${allInRoi.toFixed(2)}%`, 450, 280);
+            
+            // --- 總結算對比 ---
+            ctx.fillStyle = '#fbbf24';
+            ctx.font = 'bold 22px "Segoe UI"';
+            ctx.textAlign = 'center';
+            const diff = finalValue - allInFinalValue;
+            if (diff >= 0) {
+                ctx.fillText(`🏆 結論：定期定額比單筆歐印多賺了 $${diff.toFixed(0)}！`, canvas.width / 2, 330);
+            } else {
+                ctx.fillText(`🏆 結論：單筆歐印比定期定額多賺了 $${Math.abs(diff).toFixed(0)}！`, canvas.width / 2, 330);
+            }
+            ctx.textAlign = 'left'; // 恢復預設
+        }
+
+        // 遊戲的動畫迴圈 (每一秒鐘畫面會更新約 60 次)
+        function gameLoop() {
+            if (!gameStarted) return; // 如果遊戲還沒開始，就不做事
+
+            // 1. 清除整張畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 2. 重新畫出背景和山谷
+            drawGrid();
+            drawSmileCurve();
+
+            // 3. 計算戰車現在應該在哪裡
+            const exactMonth = tank.progress * totalMonths;
+            const position = getPositionByMonth(exactMonth);
+            
+            // A. 更新目前的「股價」(水晶單價)
+            currentPrice = position.price;
+
+            // B. 定期定額扣款邏輯：戰車每經過一個完整的月份，就扣款一次
+            if (Math.floor(exactMonth) > currentMonthIndex && currentMonthIndex < totalMonths) {
+                currentMonthIndex++; // 月份推進
+                
+                // 只有在「沒有停扣」的狀態下，才會花錢買水晶！
+                if (!isStopped) {
+                    totalInvested += currentBudget; // 從口袋掏出預算 (增加總成本)
+                    
+                    // 計算這次買到了多少水晶
+                    const boughtCrystals = currentBudget / priceHistory[currentMonthIndex];
+                    totalCrystals += boughtCrystals; 
+
+                    // 產生視覺化的水晶碎片 (視覺化籌碼)
+                    const dropCount = Math.min(50, Math.floor(boughtCrystals / 1.5)); 
+                    for(let i = 0; i < dropCount; i++) {
+                        crystalParticles.push({
+                            x: position.x + (Math.random() * 40 - 20),
+                            y: position.y, 
+                            targetY: canvas.height - 10 - (Math.random() * 50), 
+                            speed: 3 + Math.random() * 3 
+                        });
+                    }
+                }
+            }
+
+            // --- 👇 [新增與修改] 按鈕顯示邏輯 👇 ---
+            // 觸發恐慌按鈕的條件：當股價跌破 60 元，且「還沒停扣」時，顯示閃爍紅按鈕
+            if (currentPrice <= 60 && !isStopped && gameStarted) {
+                panicBtn.classList.remove('hidden');
+            } else {
+                panicBtn.classList.add('hidden'); // 否則隱藏
+            }
+
+            // [新增] 觸發恢復扣款的條件：已經停扣了，但看到股價回升到 70 元以上時，顯示綠色誘惑按鈕
+            if (currentPrice >= 70 && isStopped && gameStarted) {
+                resumeBtn.classList.remove('hidden');
+            } else {
+                resumeBtn.classList.add('hidden');
+            }
+            // --- 👆 按鈕顯示邏輯 👆 ---
+
+            // 畫出掉落與堆疊的水晶特效
+            ctx.fillStyle = '#60a5fa'; // 水晶的淺藍色
+            crystalParticles.forEach(p => {
+                if (p.y < p.targetY) {
+                    p.y += p.speed;
+                }
+                ctx.fillRect(p.x, p.y, 4, 4);
+            });
+
+            // 在畫紅色戰車之前，先畫出幽靈戰車 (讓它墊在後面)
+            drawGhostTank(position.x, position.y);
+
+            // 4. 在算好的位置上，畫出戰車
+            drawTank(position.x, position.y);
+
+            // 5. 畫出左上角的儀表板，讓玩家看到數字跳動
+            drawDashboard();
+
+            // 6. 讓戰車往前進一點點
+            tank.progress += tank.speed;
+
+            // 7. 判斷戰車是否到達終點
+            if (tank.progress <= 1) {
+                animationId = requestAnimationFrame(gameLoop);
+            } else {
+                gameStarted = false;
+                // 抵達終點時，確保所有干擾按鈕都隱藏
+                panicBtn.classList.add('hidden');
+                resumeBtn.classList.add('hidden');
+                
+                // 呼叫華麗的結算報告函數
+                drawGameOver();
+            }
+        }
+
+        // 畫網格的函數 
+        function drawGrid() {
+            ctx.strokeStyle = '#4a5568'; 
+            ctx.lineWidth = 1;
+
+            for (let x = 0; x <= canvas.width; x += 50) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= canvas.height; y += 50) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+
+        // 綁定按鈕的「點擊事件」
+        startBtn.addEventListener('click', function() {
+            currentBudget = parseInt(budgetSelect.value);
+            gameStarted = true;
+            tank.progress = 0; 
+            
+            totalInvested = 0;
+            totalCrystals = 0;
+            currentMonthIndex = 0;
+            crystalParticles = []; 
+
+            // 重置所有按鈕與狀態
+            isStopped = false;
+            panicBtn.classList.add('hidden');
+            resumeBtn.classList.add('hidden'); // [新增] 隱藏恢復按鈕
+
+            // 初始化 All-in 對照組數據
+            allInInvested = currentBudget * totalMonths; 
+            allInCrystals = allInInvested / priceHistory[0]; 
+
+            cancelAnimationFrame(animationId); 
+            gameLoop();
+        });
+
+        // 綁定恐慌停扣按鈕
+        panicBtn.addEventListener('click', function() {
+            isStopped = true; // 設定為已停扣
+            this.classList.add('hidden'); 
+        });
+
+        // [新增] 綁定恢復扣款按鈕
+        resumeBtn.addEventListener('click', function() {
+            isStopped = false; // 取消停扣，重新開始買進！
+            this.classList.add('hidden'); 
+        });
+
+        // 當網頁載入完成後，執行初始化函數
+        window.onload = init;
+    </script>
+</body>
+</html>
